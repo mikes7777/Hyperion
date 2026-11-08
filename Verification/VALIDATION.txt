@@ -1,0 +1,56 @@
+HYPERION V2 VALIDATION REPORT
+
+Scope and limitations
+Unity Editor and licensed Unity runtime are not installed in this environment.
+No Unity Play-mode run, shader import, build, rendered screenshot, keyboard
+playtest, collision/audio execution or actual race completion is claimed.
+
+C# and Unity API compatibility: PASS
+- 11 runtime C# files compiled using Roslyn 4.11.0, C# 9.0,
+  .NET Standard 2.1 reference assemblies and actual UnityEngine modules
+  from RocketModFix.UnityEngine.Redist 2022.3.62.3 (NuGet).
+- Standalone/Linux defines: 0 errors, 0 warnings in final compile.
+- UNITY_EDITOR branch plus Editor validation script: 0 errors, 0 warnings.
+  Editor APIs checked against real UnityEditor.dll from Unity3D.SDK
+  2021.1.14.1. This older editor API check is distinct from Unity 2022
+  import validation and does not establish editor runtime behavior.
+- Reduced module-reference compilation also passed with the declared
+  optional engine modules plus mandatory core/input/text rendering modules.
+- No fake Unity stubs were used. Compiler/engine reference binaries remain
+  outside the game project and are not needed to open it in Unity.
+
+Circuit numerical geometry checks: PASS
+- Track length: 2036.875 m; width: 22 m; samples: 768.
+- Equal-distance sample spacing variation: 0.01090%.
+- Maximum bank: 19.00 degrees.
+- Minimum local turn radius: 53.59 m.
+- Minimum nonlocal centerline separation: 134.41 m.
+- Road triangle normals face up (minimum dot 0.98821).
+- Collision rail normals face inward (minimum dot 0.99902).
+- Frame orthogonality and every segment's wrapping projection checked.
+- These are source-derived numerical calculations, not Unity mesh execution.
+
+AI numerical speed/braking smoke: PASS
+- 12 car/difficulty combinations complete three laps numerically.
+- Free-running three-lap model times: 88.56–99.44 s.
+- Maximum modeled corner load/configured load: 1.123.
+- Refined preview to 13 points spaced 11 m, with a 4% corner-speed margin.
+- Model excludes traffic, lane changes, collisions, rubber banding and
+  random mistakes. It does not execute Unity or prove race fairness.
+
+Reproduce numeric checks with Python 3 and numpy from the project root:
+python Verification/track_validation.py
+python Verification/ai_smoke.py
+C# reference-assembly compile harness was run in the development environment;
+compiler and reference binaries are not redistributed in this source ZIP.
+
+Local Unity checks provided, NOT EXECUTED HERE
+Open project with Unity 2022.3.62f1 / Built-in Render Pipeline.
+Run Tools > Hyperion > Validate V2, then complete the manual playtest checklist.
+Batch validation: Unity -batchmode -nographics -projectPath <project> \
+  -executeMethod HyperionValidation.RunBatch -logFile validation.log
+The editor validator checks race scene/build settings, four cars, meshes,
+road frames/projection/spacing and resource shader compilation in a temporary
+additive scene. It does not replace playing and building the game.
+
+Source hashes are included in Verification/source-hashes.json.

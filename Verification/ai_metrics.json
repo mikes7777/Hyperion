@@ -1,0 +1,91 @@
+{
+  "description": "Numerical free-running speed/brake smoke; not Unity gameplay execution. Traffic, lane changes, rubber banding and random mistakes excluded.",
+  "cases": 12,
+  "passed": true,
+  "results": [
+    {
+      "difficulty": "ROOKIE",
+      "car_index": 0,
+      "finish_3laps_seconds": 99.44,
+      "max_speed_kph": 259.2,
+      "max_corner_load_vs_configured": 1.104
+    },
+    {
+      "difficulty": "ROOKIE",
+      "car_index": 1,
+      "finish_3laps_seconds": 98.74,
+      "max_speed_kph": 268.9,
+      "max_corner_load_vs_configured": 1.123
+    },
+    {
+      "difficulty": "ROOKIE",
+      "car_index": 2,
+      "finish_3laps_seconds": 99.24,
+      "max_speed_kph": 264.1,
+      "max_corner_load_vs_configured": 1.118
+    },
+    {
+      "difficulty": "ROOKIE",
+      "car_index": 3,
+      "finish_3laps_seconds": 97.7,
+      "max_speed_kph": 282.8,
+      "max_corner_load_vs_configured": 1.115
+    },
+    {
+      "difficulty": "SPORT",
+      "car_index": 0,
+      "finish_3laps_seconds": 91.94,
+      "max_speed_kph": 297.3,
+      "max_corner_load_vs_configured": 1.118
+    },
+    {
+      "difficulty": "SPORT",
+      "car_index": 1,
+      "finish_3laps_seconds": 91.88,
+      "max_speed_kph": 308.6,
+      "max_corner_load_vs_configured": 1.107
+    },
+    {
+      "difficulty": "SPORT",
+      "car_index": 2,
+      "finish_3laps_seconds": 91.98,
+      "max_speed_kph": 302.9,
+      "max_corner_load_vs_configured": 1.118
+    },
+    {
+      "difficulty": "SPORT",
+      "car_index": 3,
+      "finish_3laps_seconds": 91.58,
+      "max_speed_kph": 324.4,
+      "max_corner_load_vs_configured": 1.112
+    },
+    {
+      "difficulty": "APEX",
+      "car_index": 0,
+      "finish_3laps_seconds": 88.56,
+      "max_speed_kph": 321.2,
+      "max_corner_load_vs_configured": 1.086
+    },
+    {
+      "difficulty": "APEX",
+      "car_index": 1,
+      "finish_3laps_seconds": 88.82,
+      "max_speed_kph": 333.3,
+      "max_corner_load_vs_configured": 1.113
+    },
+    {
+      "difficulty": "APEX",
+      "car_index": 2,
+      "finish_3laps_seconds": 88.74,
+      "max_speed_kph": 327.2,
+      "max_corner_load_vs_configured": 1.104
+    },
+    {
+      "difficulty": "APEX",
+      "car_index": 3,
+      "finish_3laps_seconds": 88.84,
+      "max_speed_kph": 350.5,
+      "max_corner_load_vs_configured": 1.089
+    }
+  ]
+}

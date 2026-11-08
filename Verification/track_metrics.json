@@ -1,0 +1,18 @@
+{
+  "length_m": 2036.8748269881887,
+  "width_m": 22,
+  "samples": 768,
+  "spacing_min_m": 2.6518916970792263,
+  "spacing_max_m": 2.6521807564494804,
+  "spacing_variation_percent": 0.010899080506522309,
+  "max_curvature_rad_per_m": 0.018660022041471803,
+  "min_sampled_radius_m": 53.59050475811364,
+  "bank_max_degrees": 19.0,
+  "min_nonlocal_center_separation_m": 134.40865260723447,
+  "min_up_normal_dot": 0.9882087594842254,
+  "min_inward_rail_normal_dot": 0.9990196933068578,
+  "frame_orthogonality_error": 1.6653345369377348e-16,
+  "segment_projection_error_m": 0.0,
+  "elevation_min_m": -12.04663564860732,
+  "elevation_max_m": 39.153675234589684
+}

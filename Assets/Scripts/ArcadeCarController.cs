@@ -1,44 +1,51 @@
 using UnityEngine;
 
 /// <summary>
-/// Stable arcade handling built around the generated track instead of WheelColliders.
-/// The Rigidbody still collides with rivals and barriers, while spline-relative grip
-/// and ride-height forces keep the car controllable on the floating circuit.
+/// Track-normal arcade chassis. Grip acts in the car's frame, not the road frame,
+/// so steering changes the trajectory and the handbrake can break rear traction.
 /// </summary>
 [RequireComponent(typeof(Rigidbody), typeof(BoxCollider))]
-public class ArcadeCarController : MonoBehaviour
+public sealed class ArcadeCarController : MonoBehaviour
 {
     public StellarCarSpec Spec { get; private set; }
     public Rigidbody Body { get; private set; }
     public float SpeedKph { get; private set; }
     public float Nitro { get; private set; } = 100f;
+    public bool IsPaused { get { return paused; } }
     public float TotalProgress { get; private set; }
     public float NormalizedProgress { get; private set; }
     public float LateralOffset { get; private set; }
     public bool CanDrive { get; private set; }
     public bool IsBoosting { get; private set; }
+    public bool IsDrifting { get; private set; }
+    public float SlipAngle { get; private set; }
+    public float Steering { get { return steering; } }
 
+    private const float RideHeight = 0.72f;
     private StellarTrack track;
+    private Transform visual;
     private int nearestHint;
-    private int lapBase;
     private float previousProgress;
-    private float steerVisual;
-    private bool paused;
-    private Vector3 pausedVelocity;
-    private Vector3 pausedAngularVelocity;
+    private float steering, throttle, brake;
+    private bool handbrake, boostRequested, boostExhausted, paused;
+    private float recoveryCooldown;
+    private Vector3 pausedVelocity, pausedAngularVelocity;
 
     public void Initialize(StellarTrack raceTrack, StellarCarSpec carSpec, float startProgress)
     {
         track = raceTrack;
         Spec = carSpec;
+        visual = transform.Find("Visuals");
         Body = GetComponent<Rigidbody>();
         Body.useGravity = false;
         Body.mass = 1250f;
-        Body.drag = 0.08f;
-        Body.angularDrag = 3.5f;
+        Body.drag = 0.015f;
+        Body.angularDrag = 8f;
         Body.interpolation = RigidbodyInterpolation.Interpolate;
         Body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-        Body.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+        // Pitch and roll must follow the road's bank and elevation.
+        Body.constraints = RigidbodyConstraints.None;
+        Body.centerOfMass = new Vector3(0f, -0.1f, 0f);
         Nitro = 100f;
         WarpToProgress(startProgress, 0f);
         SetDriving(false);
@@ -49,12 +56,16 @@ public class ArcadeCarController : MonoBehaviour
         CanDrive = enabled;
         paused = false;
         if (Body == null) return;
-        Body.isKinematic = !enabled;
-        if (!enabled)
+        if (!enabled && !Body.isKinematic)
         {
             Body.velocity = Vector3.zero;
             Body.angularVelocity = Vector3.zero;
-            IsBoosting = false;
+        }
+        Body.isKinematic = !enabled;
+        if (!enabled)
+        {
+            IsBoosting = IsDrifting = false;
+            throttle = brake = steering = SpeedKph = SlipAngle = 0f;
         }
     }
 
@@ -67,6 +78,7 @@ public class ArcadeCarController : MonoBehaviour
             pausedVelocity = Body.velocity;
             pausedAngularVelocity = Body.angularVelocity;
             Body.isKinematic = true;
+            IsBoosting = IsDrifting = false;
         }
         else if (CanDrive)
         {
@@ -81,117 +93,130 @@ public class ArcadeCarController : MonoBehaviour
         if (track == null) return;
         float normalized = Mathf.Repeat(totalProgress, 1f);
         track.GetFrame(normalized, out Vector3 center, out Vector3 tangent, out Vector3 right, out Vector3 up);
-        transform.position = center + right * lane + up * 0.72f;
-        transform.rotation = Quaternion.LookRotation(tangent, up);
+        Vector3 position = center + right * lane + up * RideHeight;
+        Quaternion rotation = Quaternion.LookRotation(tangent, up);
+        transform.SetPositionAndRotation(position, rotation);
         if (Body != null)
         {
-            Body.position = transform.position;
-            Body.rotation = transform.rotation;
-            Body.velocity = Vector3.zero;
-            Body.angularVelocity = Vector3.zero;
+            Body.position = position;
+            Body.rotation = rotation;
+            if (!Body.isKinematic)
+            {
+                Body.velocity = Vector3.zero;
+                Body.angularVelocity = Vector3.zero;
+            }
         }
-        lapBase = Mathf.FloorToInt(totalProgress);
-        NormalizedProgress = normalized;
-        previousProgress = normalized;
+        NormalizedProgress = previousProgress = normalized;
         TotalProgress = totalProgress;
         LateralOffset = lane;
+        SpeedKph = SlipAngle = steering = 0f;
+        IsBoosting = IsDrifting = false;
         nearestHint = Mathf.RoundToInt(normalized * track.SampleCount) % track.SampleCount;
     }
 
     public void RecoverToTrack()
     {
-        WarpToProgress(TotalProgress + 0.003f, 0f);
-        if (CanDrive && !paused) Body.isKinematic = false;
+        if (!CanDrive || paused || recoveryCooldown > 0f) return;
+        // Never advance distance for a reset: repeated recovery cannot award laps.
+        WarpToProgress(TotalProgress, 0f);
+        recoveryCooldown = 2f;
+    }
+
+    private void Update()
+    {
+        if (!CanDrive || paused) return;
+        throttle = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow) ? 1f : 0f;
+        brake = Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow) ? 1f : 0f;
+        float desiredSteer = (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow) ? 1f : 0f)
+                           - (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow) ? 1f : 0f);
+        steering = Mathf.MoveTowards(steering, desiredSteer, Time.deltaTime * (desiredSteer == 0f ? 5.5f : 3.8f));
+        handbrake = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        boostRequested = Input.GetKey(KeyCode.Space) || Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        if (!boostRequested) boostExhausted = false;
+        if (Input.GetKeyDown(KeyCode.F)) RecoverToTrack();
     }
 
     private void FixedUpdate()
     {
         if (!CanDrive || paused || track == null || Body == null || Body.isKinematic) return;
-
-        float currentProgress = track.FindNearestProgress(Body.position, ref nearestHint, out float lateral);
-        if (currentProgress < 0.25f && previousProgress > 0.75f) lapBase++;
-        else if (currentProgress > 0.75f && previousProgress < 0.25f) lapBase--;
-
-        NormalizedProgress = currentProgress;
-        previousProgress = currentProgress;
-        TotalProgress = lapBase + currentProgress;
+        float dt = Time.fixedDeltaTime;
+        recoveryCooldown = Mathf.Max(0f, recoveryCooldown - dt);
+        float progress = track.FindNearestProgress(Body.position, ref nearestHint, out float lateral);
+        float delta = Mathf.DeltaAngle(previousProgress * 360f, progress * 360f) / 360f;
+        // Reject discontinuous projections (e.g. a collision throwing a car across the circuit).
+        float plausibleDistance = Mathf.Max(12f, Body.velocity.magnitude * dt * 4f);
+        if (Mathf.Abs(delta) * track.TrackLength <= plausibleDistance) TotalProgress += delta;
+        previousProgress = NormalizedProgress = progress;
         LateralOffset = lateral;
-
-        track.GetFrame(currentProgress, out Vector3 center, out Vector3 trackTangent, out Vector3 trackRight, out Vector3 trackUp);
-        Vector3 forward = Vector3.ProjectOnPlane(transform.forward, trackUp).normalized;
-        if (forward.sqrMagnitude < 0.25f) forward = trackTangent;
-
-        float forwardSpeed = Vector3.Dot(Body.velocity, forward);
-        SpeedKph = Mathf.Abs(forwardSpeed) * 3.6f;
-        float throttle = (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow)) ? 1f : 0f;
-        float braking = (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow)) ? 1f : 0f;
-        float steer = 0f;
-        if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow)) steer -= 1f;
-        if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow)) steer += 1f;
-
-        IsBoosting = throttle > 0f && SpeedKph > 55f && Nitro > 0.2f &&
-                     (Input.GetKey(KeyCode.Space) || Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift));
-
-        float topSpeedMps = Spec.TopSpeedKph / 3.6f;
-        float allowedTopSpeed = topSpeedMps * (IsBoosting ? 1.17f : 1f);
-        float acceleration = 14f + Spec.Acceleration * 1.75f;
+        track.GetFrame(progress, out Vector3 center, out Vector3 tangent, out Vector3 roadRight, out Vector3 up);
+        Vector3 forward = Vector3.ProjectOnPlane(Body.rotation * Vector3.forward, up).normalized;
+        if (forward.sqrMagnitude < 0.1f) forward = tangent;
+        Vector3 right = Vector3.Cross(up, forward).normalized;
+        Vector3 velocity = Body.velocity;
+        float speed = Vector3.Dot(velocity, forward);
+        float sideSpeed = Vector3.Dot(velocity, right);
+        float planarSpeed = Vector3.ProjectOnPlane(velocity, up).magnitude;
+        SpeedKph = planarSpeed * 3.6f;
+        SlipAngle = Mathf.Atan2(sideSpeed, Mathf.Max(4f, Mathf.Abs(speed))) * Mathf.Rad2Deg;
+        IsDrifting = handbrake && speed > 12f;
+        IsBoosting = boostRequested && !boostExhausted && !handbrake && throttle > 0f && brake == 0f && speed > 12f && Nitro > 0.01f;
         if (IsBoosting)
         {
-            acceleration += 15f + Spec.Nitro * 0.85f;
-            Nitro = Mathf.Max(0f, Nitro - (29f - Spec.Nitro * 0.55f) * Time.fixedDeltaTime);
+            Nitro = Mathf.Max(0f, Nitro - (26f - Spec.Nitro * 0.7f) * dt);
+            if (Nitro <= 0f) boostExhausted = true;
         }
-        else
-        {
-            Nitro = Mathf.Min(100f, Nitro + (4.6f + Spec.Nitro * 0.28f) * Time.fixedDeltaTime);
-        }
+        else Nitro = Mathf.Min(100f, Nitro + (IsDrifting ? 13f : 6f) * dt);
 
+        float topSpeed = Spec.TopSpeedKph / 3.6f * (IsBoosting ? 1.19f : 1f);
+        float ratio = Mathf.Clamp01(Mathf.Max(0f, speed) / topSpeed);
+        float acceleration = (12f + Spec.Acceleration * 1.6f) * Mathf.Lerp(1f, 0.48f, ratio * ratio);
+        if (throttle > 0f && speed < topSpeed)
+            Body.AddForce(forward * (acceleration + (IsBoosting ? 22f : 0f)), ForceMode.Acceleration);
+        if (brake > 0f && speed > 0f)
+            Body.AddForce(-forward * Mathf.Min(52f, speed / dt), ForceMode.Acceleration);
+        if (handbrake && speed > 0f)
+            Body.AddForce(-forward * Mathf.Min(9f, speed / dt), ForceMode.Acceleration);
+        if (throttle == 0f && brake == 0f)
+            Body.AddForce(-forward * speed * 0.10f, ForceMode.Acceleration);
+        if (speed > topSpeed)
+            Body.AddForce(-forward * (speed - topSpeed) * 3f, ForceMode.Acceleration);
+        // Limited reverse provides a way out of barriers without needing to reset.
+        if (brake > 0f && throttle == 0f && speed < 0.4f && speed > -8f)
+            Body.AddForce(-forward * 10f, ForceMode.Acceleration);
+
+        float gripRate = IsDrifting ? 2.2f : 8f + Spec.Handling * 0.45f;
+        float maxGrip = IsDrifting ? 19f : 30f + Spec.Handling * 1.5f;
+        Body.AddForce(-right * Mathf.Clamp(sideSpeed * gripRate, -maxGrip, maxGrip), ForceMode.Acceleration);
+        float yawRate = Mathf.Min(1.22f, (31f + Spec.Handling * 1.4f) / Mathf.Max(12f, Mathf.Abs(speed)));
+        if (IsDrifting) yawRate *= 1.28f;
+        float direction = speed >= 0f ? 1f : -1f;
+        float yaw = steering * yawRate * Mathf.Rad2Deg * Mathf.Clamp01(Mathf.Abs(speed) / 5f) * direction;
+        // Gentle counter-steer stabilizes a drift after the player releases steering.
+        if (!handbrake) yaw += Mathf.Clamp(SlipAngle, -30f, 30f) * 0.38f;
+        Vector3 steered = Quaternion.AngleAxis(yaw * dt, up) * forward;
+        Vector3 smoothedUp = Vector3.Slerp(Body.rotation * Vector3.up, up, 1f - Mathf.Exp(-12f * dt));
+        Body.MoveRotation(Quaternion.LookRotation(Vector3.ProjectOnPlane(steered, smoothedUp).normalized, smoothedUp));
+        Body.angularVelocity = Vector3.zero;
+
+        float height = Vector3.Dot(Body.position - center, up);
+        float spring = (RideHeight - height) * 130f - Vector3.Dot(velocity, up) * 20f;
+        Body.AddForce(up * spring, ForceMode.Acceleration);
         float edge = Mathf.Abs(lateral) / (track.TrackWidth * 0.5f);
-        float edgePenalty = Mathf.InverseLerp(0.78f, 1.08f, edge);
-        if (throttle > 0f && forwardSpeed < allowedTopSpeed)
-            Body.AddForce(forward * acceleration * (1f - edgePenalty * 0.68f), ForceMode.Acceleration);
-
-        if (braking > 0f && forwardSpeed > 0.2f)
-            Body.AddForce(-forward * 42f, ForceMode.Acceleration);
-
-        float overspeed = Mathf.Max(0f, forwardSpeed - allowedTopSpeed);
-        if (overspeed > 0f) Body.AddForce(-forward * overspeed * 2.4f, ForceMode.Acceleration);
-        Body.AddForce(-forward * Mathf.Max(0f, forwardSpeed) * 0.055f, ForceMode.Acceleration);
-
-        float speed01 = Mathf.Clamp01(Mathf.Abs(forwardSpeed) / Mathf.Max(1f, topSpeedMps));
-        float steeringDegrees = (35f + Spec.Handling * 4.2f) * (0.3f + speed01 * 0.7f);
-        if (Mathf.Abs(forwardSpeed) > 1.4f)
+        float shoulder = Mathf.InverseLerp(0.84f, 1.04f, edge);
+        if (shoulder > 0f)
         {
-            Quaternion steered = Quaternion.AngleAxis(steer * steeringDegrees * Time.fixedDeltaTime, trackUp) * Body.rotation;
-            Body.MoveRotation(steered);
+            Body.AddForce(-roadRight * Mathf.Sign(lateral) * shoulder * 18f, ForceMode.Acceleration);
+            Body.AddForce(-Vector3.ProjectOnPlane(velocity, up) * shoulder * 0.45f, ForceMode.Acceleration);
         }
-
-        // Strong lateral tire grip with a small amount of high-speed slip.
-        float lateralVelocity = Vector3.Dot(Body.velocity, trackRight);
-        float grip = (4.8f + Spec.Handling * 0.82f) * Mathf.Lerp(1f, 0.72f, speed01);
-        Body.AddForce(-trackRight * lateralVelocity * grip, ForceMode.Acceleration);
-
-        // Ride-height spring keeps the car hovering just above the zero-thickness road mesh.
-        float currentHeight = Vector3.Dot(Body.position - center, trackUp);
-        float verticalSpeed = Vector3.Dot(Body.velocity, trackUp);
-        float spring = (0.72f - currentHeight) * 84f - verticalSpeed * 13f;
-        Body.AddForce(trackUp * spring, ForceMode.Acceleration);
-
-        // Track assist is intentionally light: players can still slide wide and hit the rails.
-        float headingError = Vector3.SignedAngle(forward, trackTangent, trackUp);
-        float assist = Mathf.Lerp(0.55f, 1.7f, Mathf.Clamp01(edge)) + (1f - speed01) * 0.25f;
-        Body.AddTorque(Vector3.up * Mathf.Clamp(headingError, -25f, 25f) * assist * 0.12f, ForceMode.Acceleration);
-
-        if (edgePenalty > 0f)
+        if (visual != null)
         {
-            Body.AddForce(-Body.velocity * edgePenalty * 1.6f, ForceMode.Acceleration);
-            Body.AddForce(-Mathf.Sign(lateral) * trackRight * edgePenalty * 7f, ForceMode.Acceleration);
+            Quaternion lean = Quaternion.Euler(-throttle * ratio * 0.6f + brake * 1.8f, 0f, -steering * ratio * 2.2f);
+            visual.localRotation = Quaternion.Slerp(visual.localRotation, lean, 1f - Mathf.Exp(-9f * dt));
         }
-
-        steerVisual = Mathf.Lerp(steerVisual, steer, 1f - Mathf.Exp(-9f * Time.fixedDeltaTime));
-        Transform visual = transform.Find("Visuals");
-        if (visual != null) visual.localRotation = Quaternion.Euler(0f, steerVisual * 2.4f, -steerVisual * 1.7f);
-
-        if (Body.position.y < center.y - 8f || Mathf.Abs(lateral) > track.TrackWidth * 1.35f)
+        if (height < -5f || height > 12f || edge > 1.5f)
+        {
+            recoveryCooldown = 0f;
             RecoverToTrack();
+        }
     }
 }

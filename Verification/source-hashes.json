@@ -1,0 +1,19 @@
+{
+  "Assets/Editor/HyperionValidation.cs": "24ebed1d33a14b8a09efc15c898ae42349c291dd485029c8c1fa328e55e0de30",
+  "Assets/Scripts/ArcadeCarController.cs": "3595e3f9834940a93b70b4962d2de010e29cfff1c2a2b4550f165089dc0f0c74",
+  "Assets/Scripts/HyperionGame.cs": "b0d2f7a05c39663c66bae13cfeb1ff82bf5f0467a7893c4e52d728683287d65f",
+  "Assets/Scripts/SpaceEnvironment.cs": "ef74363e915022beee3bdb7786fe80d663f686ad275385178ec2f43ce4e81367",
+  "Assets/Scripts/StellarAICar.cs": "93f462c26ed2aaed25749fb6f076a3f933f439b6698784eec69b5e702e34391b",
+  "Assets/Scripts/StellarCarFactory.cs": "f013d7065dda809c8315a0ae1e4f622cc5187771ac4fb649e3d76d663be554ae",
+  "Assets/Scripts/StellarEngineAudio.cs": "c81648acafd03e108ed42586a2e3ba7f0941779bafc1db268caf0c84a4525429",
+  "Assets/Scripts/StellarFollowCamera.cs": "c1a2602014add5041dc632769c907c7ae2a9d467bce9bed2930e50f06da3e89b",
+  "Assets/Scripts/StellarRaceAudio.cs": "71de098908a469148f4de86cb70351f7db00f79f0f9812d42a463c838f562eb0",
+  "Assets/Scripts/StellarSettings.cs": "33835a3639ff880a73f1e855b948d1076533f081addbd53f876faac9dd533f18",
+  "Assets/Scripts/StellarTrack.cs": "6f37a6a3223fcf66a5597a445102fca561016afa54f79d329be24ecc3d5b370f",
+  "Assets/Scripts/StellarVehicleVisuals.cs": "2cf77fc1d08f2f386d7b18302defdca5857927018134f5605fbc505953a6d5b1",
+  "Assets/Shaders/Resources/HyperionAtmosphere.shader": "95f63a6b9aedda921b54c00e41df541aa83bd6dcf950ee5b05f0f07cc2d57cd1",
+  "Assets/Shaders/Resources/HyperionFinish.shader": "6653c15344cda574f210e580fbd0e7613527f60131787aa3846b830d29927409",
+  "Assets/Shaders/Resources/HyperionNebula.shader": "01d8637eb94da3e424958125776113c5030bff0b6a6ef6d696eb3803b779f472",
+  "Assets/Shaders/Resources/HyperionPlanet.shader": "28060402f8c3a074b03eb14a1348ee970361788872a0097774c615493a8206d3",
+  "Assets/Shaders/Resources/HyperionStars.shader": "12a78f0c4a9f4a80d77964cd5d0c96158530e93f82d51e077fb2dbabeb438bdc"
+}

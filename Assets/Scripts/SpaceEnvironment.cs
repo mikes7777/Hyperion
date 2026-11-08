@@ -7,7 +7,8 @@ using UnityEngine.Rendering;
 /// </summary>
 public static class SpaceEnvironment
 {
-    private const int StarCount = 1100;
+    private const int StarCount = 1800;
+    private static Mesh smoothSphere;
 
     public static GameObject Build(Transform parent = null)
     {
@@ -23,8 +24,8 @@ public static class SpaceEnvironment
         CreatePlanet(
             root.transform,
             "Vesper Prime",
-            new Vector3(-245f, 62f, 175f),
-            54f,
+            new Vector3(-1320f, 430f, 1420f),
+            390f,
             new Color(0.24f, 0.34f, 0.95f),
             new Color(0.02f, 0.04f, 0.18f),
             true,
@@ -35,8 +36,8 @@ public static class SpaceEnvironment
         CreatePlanet(
             root.transform,
             "Helios Ember",
-            new Vector3(265f, -34f, -132f),
-            72f,
+            new Vector3(1580f, -260f, -1320f),
+            320f,
             new Color(0.96f, 0.20f, 0.08f),
             new Color(0.18f, 0.015f, 0.01f),
             false,
@@ -47,8 +48,8 @@ public static class SpaceEnvironment
         CreatePlanet(
             root.transform,
             "Oris",
-            new Vector3(70f, 118f, 330f),
-            31f,
+            new Vector3(270f, 650f, 2200f),
+            160f,
             new Color(0.11f, 0.82f, 0.78f),
             new Color(0.01f, 0.12f, 0.18f),
             false,
@@ -59,8 +60,8 @@ public static class SpaceEnvironment
         CreatePlanet(
             root.transform,
             "Nyx",
-            new Vector3(-332f, -71f, -112f),
-            43f,
+            new Vector3(-2020f, -310f, -1280f),
+            270f,
             new Color(0.50f, 0.16f, 0.78f),
             new Color(0.055f, 0.012f, 0.10f),
             true,
@@ -76,12 +77,15 @@ public static class SpaceEnvironment
     {
         RenderSettings.fog = false;
         RenderSettings.ambientMode = AmbientMode.Trilight;
-        RenderSettings.ambientSkyColor = new Color(0.075f, 0.09f, 0.18f);
-        RenderSettings.ambientEquatorColor = new Color(0.027f, 0.035f, 0.085f);
-        RenderSettings.ambientGroundColor = new Color(0.008f, 0.009f, 0.025f);
+        RenderSettings.ambientSkyColor = new Color(0.28f, 0.34f, 0.47f);
+        RenderSettings.ambientEquatorColor = new Color(0.15f, 0.19f, 0.28f);
+        RenderSettings.ambientGroundColor = new Color(0.045f, 0.06f, 0.1f);
         RenderSettings.ambientIntensity = 0.82f;
-        RenderSettings.reflectionIntensity = 0.3f;
-        RenderSettings.skybox = null;
+        RenderSettings.reflectionIntensity = 0.7f;
+        Shader skyShader = Resources.Load<Shader>("HyperionNebula");
+        if (skyShader != null && skyShader.isSupported) RenderSettings.skybox = new Material(skyShader) { name = "Vesper Nebula Sky" };
+        else RenderSettings.skybox = null;
+        DynamicGI.UpdateEnvironment();
     }
 
     private static void CreateKeyLight(Transform parent)
@@ -93,10 +97,19 @@ public static class SpaceEnvironment
         Light key = lightObject.AddComponent<Light>();
         key.type = LightType.Directional;
         key.color = new Color(0.72f, 0.84f, 1f);
-        key.intensity = 1.22f;
+        key.intensity = 1.65f;
         key.shadows = LightShadows.Soft;
         key.shadowStrength = 0.72f;
-        key.shadowBias = 0.035f;
+        key.shadowBias = 0.025f;
+
+        GameObject fillObject = new GameObject("Warm Orbital Fill");
+        fillObject.transform.SetParent(parent, false);
+        fillObject.transform.rotation = Quaternion.Euler(19f, 145f, 0f);
+        Light fill = fillObject.AddComponent<Light>();
+        fill.type = LightType.Directional;
+        fill.color = new Color(1f, 0.55f, 0.32f);
+        fill.intensity = 0.55f;
+        fill.shadows = LightShadows.None;
     }
 
     private static void CreateStarField(Transform parent)
@@ -133,7 +146,7 @@ public static class SpaceEnvironment
         for (int i = 0; i < stars.Length; i++)
         {
             Vector3 direction = Random.onUnitSphere;
-            float radius = Random.Range(210f, 620f);
+            float radius = Random.Range(3300f, 3900f);
             float brightness = Random.Range(0.38f, 1f);
             float blueBias = Random.Range(0f, 1f);
 
@@ -145,7 +158,7 @@ public static class SpaceEnvironment
             stars[i].position = direction * radius;
             stars[i].startLifetime = 100000f;
             stars[i].remainingLifetime = 100000f;
-            stars[i].startSize = Random.Range(0.18f, 0.72f) * (Random.value > 0.965f ? 2.1f : 1f);
+            stars[i].startSize = Random.Range(1.0f, 2.9f) * (Random.value > 0.965f ? 2.1f : 1f);
             stars[i].startColor = color;
             stars[i].rotation = Random.Range(0f, Mathf.PI * 2f);
         }
@@ -157,7 +170,7 @@ public static class SpaceEnvironment
 
     private static Material CreateStarMaterial()
     {
-        Shader shader = Shader.Find("Legacy Shaders/Particles/Additive");
+        Shader shader = Resources.Load<Shader>("HyperionStars");
         if (shader == null)
             shader = Shader.Find("Particles/Standard Unlit");
         if (shader == null)
@@ -211,6 +224,7 @@ public static class SpaceEnvironment
     {
         GameObject planet = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         planet.name = planetName;
+        planet.GetComponent<MeshFilter>().sharedMesh = GetSmoothSphere();
         planet.transform.SetParent(parent, false);
         planet.transform.position = position;
         planet.transform.localScale = Vector3.one * radius * 2f;
@@ -224,13 +238,10 @@ public static class SpaceEnvironment
         spin.degreesPerSecond = rotationSpeed;
 
         CreateAtmosphere(planet.transform, radius, emissionColor);
-        CreateSurfaceBand(planet.transform, radius, lightColor);
-
-        if (hasRings)
-            CreateRing(planet.transform, radius * 1.18f, radius * 1.82f, emissionColor);
 
         GameObject moon = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         moon.name = planetName + " Moon";
+        moon.GetComponent<MeshFilter>().sharedMesh = GetSmoothSphere();
         moon.transform.SetParent(parent, false);
         moon.transform.position = position + new Vector3(radius * 1.7f, radius * 0.42f, -radius * 1.3f);
         moon.transform.localScale = Vector3.one * radius * 0.19f;
@@ -245,7 +256,13 @@ public static class SpaceEnvironment
 
     private static Material CreatePlanetMaterial(string materialName, Color lightColor, Color shadowColor, Color emissionColor)
     {
-        Material material = CreateLitMaterial(materialName, Color.Lerp(lightColor, shadowColor, 0.34f), 0.2f, 0.78f, emissionColor * 0.12f);
+        Shader shader = Resources.Load<Shader>("HyperionPlanet");
+        if (shader == null || !shader.isSupported) return CreateLitMaterial(materialName, Color.Lerp(lightColor, shadowColor, 0.34f), 0.2f, 0.6f, emissionColor * 0.03f);
+        Material material = new Material(shader) { name = materialName };
+        material.SetColor("_Color", lightColor);
+        material.SetColor("_ShadowColor", shadowColor);
+        material.SetColor("_CloudColor", Color.Lerp(lightColor, Color.white, 0.65f));
+        material.SetFloat("_Seed", lightColor.r * 11f + lightColor.g * 7f);
         return material;
     }
 
@@ -253,19 +270,20 @@ public static class SpaceEnvironment
     {
         GameObject atmosphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         atmosphere.name = "Atmosphere Glow";
+        atmosphere.GetComponent<MeshFilter>().sharedMesh = GetSmoothSphere();
         atmosphere.transform.SetParent(planet, false);
         atmosphere.transform.localPosition = Vector3.zero;
         atmosphere.transform.localRotation = Quaternion.identity;
         atmosphere.transform.localScale = Vector3.one * 1.045f;
         RemovePrimitiveCollider(atmosphere);
 
-        Shader shader = Shader.Find("Legacy Shaders/Transparent/Diffuse");
+        Shader shader = Resources.Load<Shader>("HyperionAtmosphere");
         if (shader == null)
             shader = Shader.Find("Standard");
         Material material = new Material(shader);
         material.name = "Generated Atmosphere";
         material.hideFlags = HideFlags.DontSave;
-        Color atmosphereColor = new Color(glowColor.r, glowColor.g, glowColor.b, 0.10f);
+        Color atmosphereColor = new Color(glowColor.r, glowColor.g, glowColor.b, 0.6f);
         if (material.HasProperty("_Color"))
             material.SetColor("_Color", atmosphereColor);
         if (material.HasProperty("_BaseColor"))
@@ -296,9 +314,9 @@ public static class SpaceEnvironment
         ring.transform.localScale = Vector3.one / (planet.localScale.x > 0f ? planet.localScale.x : 1f);
 
         MeshFilter filter = ring.AddComponent<MeshFilter>();
-        filter.sharedMesh = CreateAnnulusMesh(innerRadius, outerRadius, 160);
+        filter.sharedMesh = CreateStriatedRingMesh(innerRadius, outerRadius);
         MeshRenderer renderer = ring.AddComponent<MeshRenderer>();
-        renderer.sharedMaterial = CreateEmissionMaterial("Generated Ring Material", color * 0.48f);
+        renderer.sharedMaterial = CreateEmissionMaterial("Generated Ring Material", Color.Lerp(color, new Color(0.65f, 0.56f, 0.44f), 0.65f) * 0.42f);
     }
 
     private static Mesh CreateAnnulusMesh(float innerRadius, float outerRadius, int segments)
@@ -353,8 +371,8 @@ public static class SpaceEnvironment
         GameObject sun = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         sun.name = "Distant Cyan Star";
         sun.transform.SetParent(parent, false);
-        sun.transform.position = new Vector3(380f, 210f, 420f);
-        sun.transform.localScale = Vector3.one * 46f;
+        sun.transform.position = new Vector3(2520f, 1210f, 2220f);
+        sun.transform.localScale = Vector3.one * 120f;
         RemovePrimitiveCollider(sun);
         sun.GetComponent<MeshRenderer>().sharedMaterial = CreateEmissionMaterial(
             "Distant Star Material",
@@ -401,6 +419,70 @@ public static class SpaceEnvironment
     private static Material CreateEmissionMaterial(string name, Color emission)
     {
         return CreateLitMaterial(name, emission * 0.28f, 0.28f, 0.86f, emission);
+    }
+
+
+    private static Mesh GetSmoothSphere()
+    {
+        if (smoothSphere != null) return smoothSphere;
+        const int longitude = 96, latitude = 48;
+        var vertices = new Vector3[(longitude + 1) * (latitude + 1)];
+        var normals = new Vector3[vertices.Length];
+        var uv = new Vector2[vertices.Length];
+        var triangles = new int[longitude * latitude * 6];
+        for (int y = 0; y <= latitude; y++)
+        {
+            float phi = y / (float)latitude * Mathf.PI;
+            for (int x = 0; x <= longitude; x++)
+            {
+                float theta = x / (float)longitude * Mathf.PI * 2f;
+                int i = y * (longitude + 1) + x;
+                normals[i] = new Vector3(Mathf.Sin(phi) * Mathf.Cos(theta), Mathf.Cos(phi), Mathf.Sin(phi) * Mathf.Sin(theta));
+                vertices[i] = normals[i] * 0.5f;
+                uv[i] = new Vector2(x / (float)longitude, y / (float)latitude);
+            }
+        }
+        int index = 0;
+        for (int y = 0; y < latitude; y++) for (int x = 0; x < longitude; x++)
+        {
+            int a = y * (longitude + 1) + x, b = a + longitude + 1;
+            triangles[index++] = a; triangles[index++] = a + 1; triangles[index++] = b;
+            triangles[index++] = a + 1; triangles[index++] = b + 1; triangles[index++] = b;
+        }
+        smoothSphere = new Mesh { name = "Smooth Planet Sphere", vertices = vertices, normals = normals, uv = uv, triangles = triangles };
+        smoothSphere.RecalculateBounds();
+        return smoothSphere;
+    }
+
+    private static Mesh CreateStriatedRingMesh(float inner, float outer)
+    {
+        const int bands = 22, segments = 128;
+        var vertices = new System.Collections.Generic.List<Vector3>();
+        var triangles = new System.Collections.Generic.List<int>();
+        for (int band = 0; band < bands; band++)
+        {
+            if (band == 9 || band == 15) continue;
+            float r0 = Mathf.Lerp(inner, outer, band / (float)bands);
+            float r1 = Mathf.Lerp(inner, outer, (band + 0.72f) / bands);
+            int start = vertices.Count;
+            for (int i = 0; i <= segments; i++)
+            {
+                float a = i / (float)segments * Mathf.PI * 2f;
+                Vector3 direction = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
+                vertices.Add(direction * r0); vertices.Add(direction * r1);
+            }
+            for (int i = 0; i < segments; i++)
+            {
+                int a = start + i * 2;
+                triangles.Add(a); triangles.Add(a + 1); triangles.Add(a + 2);
+                triangles.Add(a + 1); triangles.Add(a + 3); triangles.Add(a + 2);
+                triangles.Add(a + 2); triangles.Add(a + 1); triangles.Add(a);
+                triangles.Add(a + 2); triangles.Add(a + 3); triangles.Add(a + 1);
+            }
+        }
+        var mesh = new Mesh { name = "Striated Orbital Ring" };
+        mesh.SetVertices(vertices); mesh.SetTriangles(triangles, 0); mesh.RecalculateNormals(); mesh.RecalculateBounds();
+        return mesh;
     }
 
     private static void RemovePrimitiveCollider(GameObject gameObject)

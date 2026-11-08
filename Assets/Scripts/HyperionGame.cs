@@ -1,91 +1,82 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// Runtime bootstrap, race director, garage, and IMGUI presentation for Hyperion.
-/// Drop the project into Unity and press Play: no prefabs or scene references are required.
-/// </summary>
+/// <summary>Runtime race director and resolution-independent orbital racing interface.</summary>
 public sealed class HyperionGame : MonoBehaviour
 {
     private enum GameMode { Garage, Countdown, Racing, Paused, Finished }
-
     private struct DifficultySpec
     {
-        public string Name;
-        public string Subtitle;
+        public string Name, Subtitle;
         public float PaceMin, PaceMax, Catchup, MinBand, MaxBand, LaneResponse, Mistakes;
-
-        public DifficultySpec(string name, string subtitle, float paceMin, float paceMax,
-            float catchup, float minBand, float maxBand, float laneResponse, float mistakes)
+        public DifficultySpec(string name, string subtitle, float min, float max, float catchup,
+            float minBand, float maxBand, float response, float mistakes)
         {
-            Name = name; Subtitle = subtitle; PaceMin = paceMin; PaceMax = paceMax;
-            Catchup = catchup; MinBand = minBand; MaxBand = maxBand;
-            LaneResponse = laneResponse; Mistakes = mistakes;
+            Name = name; Subtitle = subtitle; PaceMin = min; PaceMax = max; Catchup = catchup;
+            MinBand = minBand; MaxBand = maxBand; LaneResponse = response; Mistakes = mistakes;
         }
     }
-
     private static readonly DifficultySpec[] Difficulties =
     {
-        new DifficultySpec("ROOKIE", "FORGIVING", 0.79f, 0.90f, 0.000075f, 0.82f, 1.12f, 1.25f, 0.24f),
-        new DifficultySpec("SPORT", "COMPETITIVE", 0.91f, 1.005f, 0.000032f, 0.89f, 1.08f, 1.65f, 0.11f),
-        new DifficultySpec("APEX", "RELENTLESS", 0.985f, 1.065f, 0.000010f, 0.95f, 1.045f, 2.05f, 0.035f)
+        new DifficultySpec("ROOKIE", "FIND YOUR LINE", .77f, .86f, .000075f, .90f, 1.08f, 1.25f, .18f),
+        new DifficultySpec("SPORT", "CHASE THE PODIUM", .89f, .98f, .000032f, .94f, 1.05f, 1.65f, .08f),
+        new DifficultySpec("APEX", "EARN EVERY METRE", .98f, 1.04f, .000010f, .97f, 1.025f, 2.05f, .025f)
     };
-
-    private const int TotalLaps = 3;
-    private const int RivalCount = 6;
-
-    private GameMode mode = GameMode.Garage;
-    private GameMode resumeMode = GameMode.Racing;
+    private const int TotalLaps = 3, RivalCount = 6;
+    private const float CanvasWidth = 1600f, CanvasHeight = 900f;
+    private GameMode mode = GameMode.Garage, resumeMode = GameMode.Racing;
     private StellarTrack track;
     private StellarFollowCamera followCamera;
+    private StellarRaceAudio raceAudio;
+    private int countdownTick;
     private Transform vehiclesRoot;
     private GameObject playerObject;
     private ArcadeCarController player;
     private readonly List<StellarAICar> rivals = new List<StellarAICar>();
-    private int selectedCar;
-    private int selectedDifficulty = 1;
-    private float countdown;
-    private float goFlash;
-    private float raceTime;
-    private float lapStartTime;
-    private int lastLapIndex;
     private readonly List<float> lapTimes = new List<float>();
-    private int finalPlace = 7;
-
-    private GUIStyle logoStyle, overlineStyle, heroStyle, bodyStyle, carButtonStyle, selectedCarButtonStyle;
-    private GUIStyle buttonStyle, selectedButtonStyle, launchStyle, hudBigStyle, hudLabelStyle;
-    private GUIStyle centerTitleStyle, centerBodyStyle, resultPlaceStyle;
-    private Texture2D panelTexture, cardTexture, buttonTexture, selectedTexture, launchTexture, lineTexture, blackTexture;
-    private readonly Color cyan = new Color(0.25f, 0.94f, 1f, 1f);
-    private readonly Color violet = new Color(0.43f, 0.24f, 1f, 1f);
-    private readonly Color muted = new Color(0.58f, 0.63f, 0.73f, 1f);
+    private readonly List<Standing> standings = new List<Standing>();
+    private struct Standing { public string Name; public float Progress, FinishTime; public bool Player, Finished; }
+    private int selectedCar, selectedDifficulty = 1, finalPlace = 7, lastLapIndex;
+    private bool timeTrial, showSettings, lapTimingStarted, recordSet, lastLapRecord;
+    private float countdown, goFlash, raceTime, lapStartTime;
+    private float bestSavedLap, lastSplit, splitFlash;
+    private Vector2[] mapPoints;
+    private Vector2 mapMin, mapMax;
+    private Texture2D white;
+    private GUIStyle logo, eyebrow, title, heading, body, small, number, centerNumber, centered, button, selectedButton, primary;
+    private readonly Color cyan = new Color(.34f, .96f, .94f);
+    private readonly Color violet = new Color(.65f, .45f, 1f);
+    private readonly Color muted = new Color(.55f, .65f, .72f);
+    private readonly Color panel = new Color(.025f, .045f, .065f, .95f);
+    private readonly Color card = new Color(.07f, .105f, .135f, .95f);
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void CreateRuntimeGame()
     {
-        if (FindObjectOfType<HyperionGame>() != null) return;
-        GameObject root = new GameObject("HYPERION // Runtime");
-        root.AddComponent<HyperionGame>();
+        if (FindObjectOfType<HyperionGame>() == null) new GameObject("HYPERION // V2").AddComponent<HyperionGame>();
     }
-
     private void Awake()
     {
         DontDestroyOnLoad(gameObject);
         Application.targetFrameRate = 120;
-        QualitySettings.vSyncCount = 0;
+        Time.fixedDeltaTime = 1f / 60f;
+        Time.maximumDeltaTime = .1f;
+        QualitySettings.vSyncCount = 1;
         Physics.gravity = Vector3.zero;
+        StellarSettings.Load();
+        raceAudio = gameObject.AddComponent<StellarRaceAudio>();
+        selectedCar = Mathf.Clamp(PlayerPrefs.GetInt("Hyperion.V2.Car", 0), 0, StellarCarCatalog.Cars.Length - 1);
+        selectedDifficulty = Mathf.Clamp(PlayerPrefs.GetInt("Hyperion.V2.Difficulty", 1), 0, Difficulties.Length - 1);
         BuildWorld();
     }
-
     private void BuildWorld()
     {
         SpaceEnvironment.Build(transform);
-
         GameObject trackObject = new GameObject("Stellar Circuit");
         trackObject.transform.SetParent(transform, false);
         track = trackObject.AddComponent<StellarTrack>();
         track.Build();
-
+        BuildMap();
         Camera camera = Camera.main;
         if (camera == null)
         {
@@ -94,15 +85,13 @@ public sealed class HyperionGame : MonoBehaviour
             camera = cameraObject.AddComponent<Camera>();
             cameraObject.AddComponent<AudioListener>();
         }
-        camera.clearFlags = CameraClearFlags.SolidColor;
-        camera.backgroundColor = new Color(0.002f, 0.003f, 0.012f, 1f);
+        camera.clearFlags = CameraClearFlags.Skybox;
+        camera.backgroundColor = new Color(.003f, .006f, .018f);
         camera.allowHDR = true;
         followCamera = camera.GetComponent<StellarFollowCamera>();
         if (followCamera == null) followCamera = camera.gameObject.AddComponent<StellarFollowCamera>();
-
         BuildVehicles(true);
     }
-
     private void BuildVehicles(bool showroom)
     {
         if (vehiclesRoot != null)
@@ -110,442 +99,512 @@ public sealed class HyperionGame : MonoBehaviour
             vehiclesRoot.gameObject.SetActive(false);
             Destroy(vehiclesRoot.gameObject);
         }
-
         vehiclesRoot = new GameObject("Race Vehicles").transform;
         vehiclesRoot.SetParent(transform, false);
         rivals.Clear();
-
-        StellarCarSpec playerSpec = StellarCarCatalog.Cars[selectedCar];
-        playerObject = StellarCarFactory.CreateCar(playerSpec, "PLAYER // " + playerSpec.DisplayName, true);
+        StellarCarSpec spec = StellarCarCatalog.Cars[selectedCar];
+        playerObject = StellarCarFactory.CreateCar(spec, "YOU // " + spec.DisplayName, true);
         playerObject.transform.SetParent(vehiclesRoot, true);
         player = playerObject.AddComponent<ArcadeCarController>();
-        player.Initialize(track, playerSpec, 0f);
+        float playerStart = showroom ? .001f : -(timeTrial ? 7f : 28f) / track.TrackLength;
+        player.Initialize(track, spec, playerStart);
         playerObject.AddComponent<AudioSource>();
         playerObject.AddComponent<StellarEngineAudio>();
-
-        DifficultySpec difficulty = Difficulties[selectedDifficulty];
-        float[] lanes = { -0.62f, 0.45f, -0.18f, 0.68f, -0.44f, 0.15f };
-        Color[] rivalColors =
+        if (!showroom && !timeTrial)
         {
-            new Color(1f,.08f,.32f), new Color(.04f,.82f,1f), new Color(1f,.76f,.05f),
-            new Color(.52f,.20f,1f), new Color(.08f,.93f,.49f), new Color(1f,.26f,.06f)
-        };
-
-        for (int i = 0; i < RivalCount; i++)
-        {
-            StellarCarSpec baseSpec = StellarCarCatalog.Cars[(selectedCar + i + 1) % StellarCarCatalog.Cars.Length];
-            StellarCarSpec rivalSpec = CloneWithColor(baseSpec, rivalColors[i]);
-            GameObject rivalObject = StellarCarFactory.CreateCar(rivalSpec, "RIVAL " + (i + 1) + " // " + baseSpec.DisplayName, false);
-            rivalObject.transform.SetParent(vehiclesRoot, true);
-            StellarAICar ai = rivalObject.AddComponent<StellarAICar>();
-            float pace = Mathf.Lerp(difficulty.PaceMin, difficulty.PaceMax, Hash01(i * 19 + selectedDifficulty * 7));
-            ai.Initialize(track, rivalSpec, player, 0.009f + i * 0.008f, lanes[i], pace,
-                difficulty.Catchup, difficulty.MinBand, difficulty.MaxBand,
-                difficulty.LaneResponse, difficulty.Mistakes, (Hash01(i * 31 + 8) - 0.5f) * 2f);
-            ai.SetRunning(false);
-            rivalObject.SetActive(!showroom);
-            rivals.Add(ai);
+            DifficultySpec difficulty = Difficulties[selectedDifficulty];
+            Color[] colors = { new Color(1f,.13f,.28f), cyan, new Color(1f,.72f,.2f), violet, new Color(.2f,1f,.55f), new Color(1f,.4f,.12f) };
+            for (int i = 0; i < RivalCount; i++)
+            {
+                StellarCarSpec baseSpec = StellarCarCatalog.Cars[(selectedCar + i + 1) % StellarCarCatalog.Cars.Length];
+                StellarCarSpec rivalSpec = new StellarCarSpec(baseSpec.Id, baseSpec.DisplayName, baseSpec.ClassName,
+                    baseSpec.Description, colors[i], Color.Lerp(colors[i], Color.white, .6f), baseSpec.TopSpeedKph,
+                    baseSpec.Acceleration, baseSpec.Handling, baseSpec.Nitro, baseSpec.BodyStyle);
+                GameObject rivalObject = StellarCarFactory.CreateCar(rivalSpec, "RIVAL " + (i + 1), false);
+                rivalObject.transform.SetParent(vehiclesRoot, true);
+                StellarAICar ai = rivalObject.AddComponent<StellarAICar>();
+                float start = -(21f - (i / 2) * 7f) / track.TrackLength;
+                float lane = i % 2 == 0 ? -.42f : .42f;
+                float pace = Mathf.Lerp(difficulty.PaceMin, difficulty.PaceMax, Hash01(i * 19 + selectedDifficulty * 7));
+                ai.Initialize(track, rivalSpec, player, start, lane, pace, difficulty.Catchup,
+                    difficulty.MinBand, difficulty.MaxBand, difficulty.LaneResponse, difficulty.Mistakes,
+                    (Hash01(i * 31 + 8) - .5f) * 2f);
+                ai.SetRunning(false);
+                rivals.Add(ai);
+            }
         }
-
+        bestSavedLap = PlayerPrefs.GetFloat(BestLapKey(), 0f);
         if (showroom)
         {
-            player.SetDriving(false);
-            player.WarpToProgress(0.001f, 0f);
             mode = GameMode.Garage;
+            player.SetDriving(false);
             followCamera.SetTarget(playerObject.transform, true);
             followCamera.SnapToCurrentMode();
         }
     }
-
-    private static StellarCarSpec CloneWithColor(StellarCarSpec source, Color color)
-    {
-        return new StellarCarSpec(source.Id, source.DisplayName, source.ClassName, source.Description,
-            color, Color.Lerp(color, Color.white, 0.6f), source.TopSpeedKph,
-            source.Acceleration, source.Handling, source.Nitro, source.BodyStyle);
-    }
-
-    private static float Hash01(int value)
-    {
-        return Mathf.Repeat(Mathf.Sin(value * 91.3458f + 17.17f) * 47453.5453f, 1f);
-    }
-
+    private string BestLapKey() { return "Hyperion.V2.VesperRing.BestLap." + StellarCarCatalog.Cars[selectedCar].Id; }
+    private static float Hash01(int value) { return Mathf.Repeat(Mathf.Sin(value * 91.3458f + 17.17f) * 47453.5453f, 1f); }
     private void StartRace()
     {
+        showSettings = false;
+        PlayerPrefs.SetInt("Hyperion.V2.Car", selectedCar);
+        PlayerPrefs.SetInt("Hyperion.V2.Difficulty", selectedDifficulty);
+        PlayerPrefs.Save();
         BuildVehicles(false);
-        raceTime = 0f;
-        lapStartTime = 0f;
+        raceTime = lapStartTime = 0f;
+        lapTimingStarted = recordSet = false;
         lastLapIndex = 0;
         lapTimes.Clear();
-        finalPlace = RivalCount + 1;
-        countdown = 3.25f;
-        goFlash = 0f;
+        finalPlace = rivals.Count + 1;
+        countdown = 3f; countdownTick = 3; raceAudio.Countdown(); goFlash = splitFlash = 0f;
         mode = GameMode.Countdown;
         player.SetDriving(false);
         foreach (StellarAICar rival in rivals) rival.SetRunning(false);
         followCamera.SetTarget(playerObject.transform, false);
         followCamera.SnapToCurrentMode();
-        Cursor.visible = true;
+        Cursor.visible = false;
     }
-
     private void Update()
     {
-        if (goFlash > 0f) goFlash -= Time.unscaledDeltaTime;
-
+        if (mode != GameMode.Paused)
+        {
+            goFlash = Mathf.Max(0f, goFlash - Time.deltaTime);
+            splitFlash = Mathf.Max(0f, splitFlash - Time.deltaTime);
+        }
         if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.P))
         {
             if (mode == GameMode.Racing || mode == GameMode.Countdown) Pause();
             else if (mode == GameMode.Paused) Resume();
+            else if (showSettings) { showSettings = false; StellarSettings.Save(); }
         }
         if (Input.GetKeyDown(KeyCode.R) && (mode == GameMode.Racing || mode == GameMode.Countdown)) StartRace();
-
+        if (Input.GetKeyDown(KeyCode.Return) && mode == GameMode.Garage && !showSettings) StartRace();
         if (mode == GameMode.Countdown)
         {
             countdown -= Time.deltaTime;
+            int tick = Mathf.CeilToInt(countdown);
+            if (tick > 0 && tick < countdownTick) { countdownTick = tick; raceAudio.Countdown(); }
             if (countdown <= 0f)
             {
                 mode = GameMode.Racing;
-                goFlash = 0.85f;
+                goFlash = .9f;
+                raceAudio.Go();
                 player.SetDriving(true);
                 foreach (StellarAICar rival in rivals) rival.SetRunning(true);
             }
         }
-        else if (mode == GameMode.Racing)
-        {
-            UpdateRace();
-        }
+        else if (mode == GameMode.Racing) UpdateRace();
     }
-
     private void UpdateRace()
     {
         raceTime += Time.deltaTime;
         foreach (StellarAICar rival in rivals)
             if (!rival.Finished && rival.TotalProgress >= TotalLaps) rival.MarkFinished(raceTime);
-
-        int lapIndex = Mathf.Clamp(Mathf.FloorToInt(player.TotalProgress), 0, TotalLaps - 1);
-        if (lapIndex > lastLapIndex)
+        float progress = player.TotalProgress;
+        if (!lapTimingStarted && progress >= 0f)
         {
-            lapTimes.Add(raceTime - lapStartTime);
+            // Grid run-up belongs to the race time, but never to the saved flying lap.
+            lapTimingStarted = true;
+            lapStartTime = raceTime;
+        }
+        int lapIndex = Mathf.Clamp(Mathf.FloorToInt(progress), 0, TotalLaps);
+        if (lapTimingStarted && lapIndex > lastLapIndex)
+        {
+            RecordLap(raceTime - lapStartTime);
             lapStartTime = raceTime;
             lastLapIndex = lapIndex;
         }
-
-        if (player.TotalProgress >= TotalLaps)
+        if (progress >= TotalLaps)
         {
-            lapTimes.Add(raceTime - lapStartTime);
-            finalPlace = 1;
-            foreach (StellarAICar rival in rivals)
-                if (rival.Finished || rival.TotalProgress > player.TotalProgress) finalPlace++;
+            finalPlace = GetPlace();
             player.SetDriving(false);
             foreach (StellarAICar rival in rivals) rival.SetRunning(false);
             mode = GameMode.Finished;
+            raceAudio.Finish();
+            Cursor.visible = true;
+            PlayerPrefs.Save();
         }
     }
-
+    private void RecordLap(float duration)
+    {
+        if (duration <= 0f) return;
+        lapTimes.Add(duration);
+        if (lapTimes.Count < TotalLaps) raceAudio.Lap();
+        lastSplit = bestSavedLap > 0f ? duration - bestSavedLap : 0f;
+        splitFlash = 3.5f;
+        lastLapRecord = bestSavedLap <= 0f || duration < bestSavedLap;
+        if (lastLapRecord)
+        {
+            bestSavedLap = duration;
+            recordSet = true;
+            PlayerPrefs.SetFloat(BestLapKey(), bestSavedLap);
+            PlayerPrefs.Save();
+        }
+    }
     private void Pause()
     {
         resumeMode = mode;
         mode = GameMode.Paused;
         player.SetPaused(true);
         foreach (StellarAICar rival in rivals) rival.SetPaused(true);
+        Cursor.visible = true;
     }
-
     private void Resume()
     {
+        showSettings = false;
+        StellarSettings.Save();
         mode = resumeMode;
         player.SetPaused(false);
         foreach (StellarAICar rival in rivals) rival.SetPaused(false);
+        Cursor.visible = false;
     }
-
     private void ReturnToGarage()
     {
+        showSettings = false;
+        StellarSettings.Save();
         BuildVehicles(true);
         Cursor.visible = true;
     }
-
     private void OnApplicationFocus(bool hasFocus)
     {
         if (!hasFocus && (mode == GameMode.Racing || mode == GameMode.Countdown)) Pause();
     }
-
     private int GetPlace()
     {
         if (mode == GameMode.Finished) return finalPlace;
         int place = 1;
         foreach (StellarAICar rival in rivals)
-            if (rival.TotalProgress > player.TotalProgress) place++;
+            if (rival.Finished || rival.TotalProgress > player.TotalProgress) place++;
         return place;
     }
-
     private void OnGUI()
     {
         EnsureStyles();
-        float scale = Mathf.Clamp(Mathf.Min(Screen.width / 1920f, Screen.height / 1080f), 0.62f, 1.22f);
         Matrix4x4 oldMatrix = GUI.matrix;
         Color oldColor = GUI.color;
-        GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, Vector3.one * scale);
-        float w = Screen.width / scale;
-        float h = Screen.height / scale;
-
-        if (mode == GameMode.Garage) DrawGarage(w, h);
+        float scale = Mathf.Max(.05f, Mathf.Min(Screen.width / CanvasWidth, Screen.height / CanvasHeight));
+        Vector3 offset = new Vector3((Screen.width - CanvasWidth * scale) * .5f, (Screen.height - CanvasHeight * scale) * .5f, 0f);
+        GUI.matrix = Matrix4x4.TRS(offset, Quaternion.identity, Vector3.one * scale);
+        bool wasEnabled = GUI.enabled;
+        if (showSettings) GUI.enabled = false;
+        if (mode == GameMode.Garage) DrawGarage();
         else
         {
-            DrawLogo(45f, 34f);
-            DrawHud(w, h);
-            if (mode == GameMode.Countdown) DrawCountdown(w, h);
-            if (goFlash > 0f) DrawCenteredFlash(w, h, "GO!", cyan, goFlash / 0.85f);
-            if (mode == GameMode.Paused) DrawPause(w, h);
-            if (mode == GameMode.Finished) DrawResults(w, h);
+            DrawHud();
+            if (mode == GameMode.Countdown) DrawCountdown();
+            if (goFlash > 0f) CenterFlash("GO", cyan, goFlash / .9f);
+            if (mode == GameMode.Paused) DrawPause();
+            if (mode == GameMode.Finished) DrawResults();
         }
-
+        GUI.enabled = wasEnabled;
+        if (showSettings) DrawSettings();
         GUI.matrix = oldMatrix;
         GUI.color = oldColor;
     }
-
-    private void DrawGarage(float w, float h)
+    private void DrawGarage()
     {
-        GUI.color = new Color(0f, 0f, 0f, 0.24f);
-        GUI.DrawTexture(new Rect(0f, 0f, w, h), blackTexture);
-        GUI.color = Color.white;
-        DrawLogo(54f, 35f);
-
-        Rect panel = new Rect(50f, 92f, 650f, h - 142f);
-        GUI.DrawTexture(panel, panelTexture);
-        GUI.Label(new Rect(82f, 125f, 530f, 24f), "ORBITAL RACING DIVISION  //  GARAGE 01", overlineStyle);
-        GUI.Label(new Rect(80f, 157f, 560f, 72f), "CHOOSE YOUR MACHINE.", heroStyle);
-        GUI.Label(new Rect(82f, 225f, 540f, 48f), "Four hypercars. One impossible circuit.\nLeave gravity behind.", bodyStyle);
-
-        GUI.Label(new Rect(82f, 288f, 300f, 22f), "01  SELECT CAR", overlineStyle);
-        float cardWidth = 133f;
+        Fill(new Rect(24, 24, 556, 852), panel);
+        Fill(new Rect(24, 24, 4, 852), cyan);
+        DrawLogo(52, 47);
+        Label(new Rect(52, 110, 490, 21), "V2  /  ORBITAL MOTORSPORT", eyebrow);
+        Label(new Rect(50, 142, 500, 100), "OWN THE\nIMPOSSIBLE.", title);
+        Label(new Rect(52, 257, 480, 28), "01  /  SELECT YOUR MACHINE", eyebrow);
         for (int i = 0; i < StellarCarCatalog.Cars.Length; i++)
         {
             StellarCarSpec car = StellarCarCatalog.Cars[i];
-            Rect card = new Rect(82f + i * (cardWidth + 8f), 318f, cardWidth, 84f);
-            GUIStyle style = i == selectedCar ? selectedCarButtonStyle : carButtonStyle;
-            if (GUI.Button(card, car.DisplayName + "\n" + Mathf.RoundToInt(car.TopSpeedKph) + " KM/H", style))
+            Rect r = new Rect(52 + i % 2 * 246, 291 + i / 2 * 61, 236, 52);
+            if (GUI.Button(r, car.DisplayName + "   /   " + Mathf.RoundToInt(car.TopSpeedKph), i == selectedCar ? selectedButton : button))
             {
                 selectedCar = i;
+                raceAudio.Select();
                 BuildVehicles(true);
             }
         }
-
         StellarCarSpec selected = StellarCarCatalog.Cars[selectedCar];
-        GUI.Label(new Rect(82f, 430f, 300f, 18f), selected.ClassName, overlineStyle);
-        GUI.Label(new Rect(80f, 452f, 520f, 50f), selected.DisplayName, centerTitleStyle);
-        GUI.Label(new Rect(82f, 502f, 535f, 40f), selected.Description, bodyStyle);
-        DrawStat(new Rect(82f, 557f, 250f, 12f), "TOP SPEED", Mathf.InverseLerp(290f, 350f, selected.TopSpeedKph), Mathf.RoundToInt(selected.TopSpeedKph).ToString());
-        DrawStat(new Rect(360f, 557f, 250f, 12f), "ACCEL", selected.Acceleration / 10f, selected.Acceleration.ToString("0.0"));
-        DrawStat(new Rect(82f, 608f, 250f, 12f), "HANDLING", selected.Handling / 10f, selected.Handling.ToString("0.0"));
-        DrawStat(new Rect(360f, 608f, 250f, 12f), "NITRO", selected.Nitro / 10f, selected.Nitro.ToString("0.0"));
-
-        float difficultyY = Mathf.Max(670f, h - 300f);
-        GUI.Label(new Rect(82f, difficultyY, 300f, 22f), "02  NPC DIFFICULTY", overlineStyle);
-        float difficultyWidth = 171f;
+        Label(new Rect(52, 425, 480, 20), selected.ClassName, eyebrow);
+        Label(new Rect(52, 449, 480, 48), selected.DisplayName, heading);
+        Label(new Rect(52, 503, 478, 44), selected.Description, body);
+        Stat(new Rect(52, 566, 224, 6), "ACCELERATION", selected.Acceleration / 10f);
+        Stat(new Rect(302, 566, 224, 6), "HANDLING", selected.Handling / 10f);
+        Label(new Rect(52, 594, 470, 20), "02  /  CHOOSE YOUR EVENT", eyebrow);
+        if (GUI.Button(new Rect(52, 626, 236, 42), "GRAND PRIX", !timeTrial ? selectedButton : button)) timeTrial = false;
+        if (GUI.Button(new Rect(298, 626, 236, 42), "TIME ATTACK", timeTrial ? selectedButton : button)) timeTrial = true;
         for (int i = 0; i < Difficulties.Length; i++)
         {
-            Rect button = new Rect(82f + i * (difficultyWidth + 8f), difficultyY + 29f, difficultyWidth, 60f);
-            GUIStyle style = i == selectedDifficulty ? selectedButtonStyle : buttonStyle;
-            if (GUI.Button(button, Difficulties[i].Name + "\n" + Difficulties[i].Subtitle, style))
-            {
-                selectedDifficulty = i;
-                BuildVehicles(true);
-            }
+            bool oldEnabled = GUI.enabled;
+            GUI.enabled = oldEnabled && !timeTrial;
+            if (GUI.Button(new Rect(52 + i * 164, 679, 154, 43), Difficulties[i].Name, selectedDifficulty == i ? selectedButton : button)) selectedDifficulty = i;
+            GUI.enabled = oldEnabled;
         }
-
-        Rect launch = new Rect(82f, h - 134f, 528f, 72f);
-        if (GUI.Button(launch, "3 LAPS  //  6 RIVALS\nLAUNCH RACE  →", launchStyle)) StartRace();
-        GUI.Label(new Rect(w - 615f, h - 74f, 560f, 30f), "WASD / ARROWS  DRIVE       SPACE / SHIFT  NITRO       ESC  PAUSE", hudLabelStyle);
+        if (GUI.Button(new Rect(52, 741, 482, 65), "LAUNCH  /  " + (timeTrial ? "TIME ATTACK" : "GRAND PRIX") + "   >", primary)) StartRace();
+        if (GUI.Button(new Rect(52, 820, 150, 33), "SETTINGS", button)) showSettings = true;
+        Label(new Rect(219, 821, 195, 31), "ENTER TO LAUNCH", small);
+#if !UNITY_EDITOR && !UNITY_WEBGL
+        if (GUI.Button(new Rect(422, 820, 112, 33), "QUIT", button)) Application.Quit();
+#endif
+        Label(new Rect(1035, 50, 515, 22), "VESPER RING   /   DEEP ORBIT", eyebrow);
+        Label(new Rect(1035, 80, 515, 32), (track.TrackLength / 1000f).ToString("0.00") + " KM   /   " + (timeTrial ? "SOLO RUN" : "7 CAR GRID"), body);
+        Fill(new Rect(1085, 579, 465, 250), new Color(.025f,.045f,.065f,.72f));
+        Label(new Rect(1110, 598, 410, 24), "CIRCUIT INTELLIGENCE", eyebrow);
+        DrawMap(new Rect(1105, 641, 230, 166), false);
+        Label(new Rect(1360, 650, 170, 20), "PERSONAL BEST", small);
+        Label(new Rect(1360, 678, 175, 30), bestSavedLap > 0f ? FormatTime(bestSavedLap) : "SET A LAP", centered);
+        Label(new Rect(1360, 727, 170, 56), "Banked corners.\nNo gravity.\nNo excuses.", body);
+        Label(new Rect(610, 842, 940, 30), "WASD  DRIVE    SHIFT / SPACE  BOOST    CTRL  DRIFT    C  CAMERA    F  RECOVER", small);
     }
-
     private void DrawLogo(float x, float y)
     {
-        GUI.color = cyan;
-        GUI.DrawTexture(new Rect(x, y + 4f, 7f, 27f), lineTexture);
-        GUI.DrawTexture(new Rect(x + 12f, y + 4f, 2f, 27f), lineTexture);
-        GUI.color = Color.white;
-        GUI.Label(new Rect(x + 27f, y, 240f, 30f), "HYPERION", logoStyle);
-        GUI.Label(new Rect(x + 29f, y + 26f, 210f, 18f), "ORBITAL RACING // 01", overlineStyle);
+        Fill(new Rect(x, y + 5, 6, 30), cyan);
+        Fill(new Rect(x + 12, y + 5, 2, 30), cyan);
+        Label(new Rect(x + 27, y, 350, 43), "HYPERION", logo);
     }
-
-    private void DrawHud(float w, float h)
+    private void DrawHud()
     {
-        int place = GetPlace();
-        int lap = Mathf.Clamp(Mathf.FloorToInt(player.TotalProgress) + 1, 1, TotalLaps);
-        GUI.Label(new Rect(48f, 100f, 150f, 82f), place.ToString(), hudBigStyle);
-        GUI.Label(new Rect(150f, 119f, 110f, 22f), "/ 7  POSITION", hudLabelStyle);
-        GUI.Label(new Rect(150f, 145f, 140f, 24f), "LAP " + lap + " / " + TotalLaps, overlineStyle);
-
-        GUI.Label(new Rect(w * 0.5f - 130f, 54f, 260f, 28f), FormatTime(raceTime), centerBodyStyle);
-        Rect progress = new Rect(w * 0.5f - 245f, 91f, 490f, 4f);
-        GUI.color = new Color(1f, 1f, 1f, 0.15f); GUI.DrawTexture(progress, lineTexture);
-        GUI.color = cyan;
-        float raceProgress = Mathf.Clamp01(player.TotalProgress / TotalLaps);
-        GUI.DrawTexture(new Rect(progress.x, progress.y, progress.width * raceProgress, 4f), lineTexture);
-        GUI.DrawTexture(new Rect(progress.x + progress.width * raceProgress - 5f, progress.y - 3f, 10f, 10f), lineTexture);
-        GUI.color = Color.white;
-
-        GUI.Label(new Rect(w - 270f, 96f, 215f, 78f), Mathf.RoundToInt(player.SpeedKph).ToString("000"), hudBigStyle);
-        GUI.Label(new Rect(w - 151f, 151f, 95f, 20f), "KM/H", hudLabelStyle);
-        GUI.Label(new Rect(w - 272f, 183f, 75f, 18f), "NITRO", hudLabelStyle);
-        Rect nitro = new Rect(w - 195f, 188f, 140f, 7f);
-        GUI.color = new Color(1f, 1f, 1f, .14f); GUI.DrawTexture(nitro, lineTexture);
-        GUI.color = cyan; GUI.DrawTexture(new Rect(nitro.x, nitro.y, nitro.width * player.Nitro / 100f, nitro.height), lineTexture);
-        GUI.color = Color.white;
-
-        GUI.Label(new Rect(45f, h - 49f, 650f, 24f), "WASD / ARROWS  DRIVE    •    SPACE / SHIFT  NITRO    •    R  RESTART    •    ESC  PAUSE", hudLabelStyle);
+        Fill(new Rect(28, 28, 282, 146), panel);
+        Fill(new Rect(28, 28, 3, 146), cyan);
+        Label(new Rect(47, 40, 240, 20), timeTrial ? "TIME ATTACK" : "GRAND PRIX", eyebrow);
+        Label(new Rect(43, 64, 100, 83), timeTrial ? "TT" : GetPlace().ToString("00"), number);
+        Label(new Rect(158, 85, 135, 22), timeTrial ? "SOLO SESSION" : "/ 07  POSITION", small);
+        Label(new Rect(158, 118, 135, 22), "LAP " + Mathf.Clamp(Mathf.FloorToInt(player.TotalProgress) + 1, 1, TotalLaps) + " / 03", eyebrow);
+        Fill(new Rect(610, 28, 380, 88), panel);
+        Label(new Rect(635, 40, 330, 20), "RACE TIME", eyebrow);
+        Label(new Rect(630, 65, 340, 36), FormatTime(raceTime), centered);
+        float progress = Mathf.Clamp01(player.TotalProgress / TotalLaps);
+        Fill(new Rect(610, 112, 380, 4), card);
+        Fill(new Rect(610, 112, 380 * progress, 4), cyan);
+        Fill(new Rect(1290, 28, 282, 146), panel);
+        Label(new Rect(1310, 41, 240, 20), "CURRENT LAP", small);
+        Label(new Rect(1310, 64, 240, 28), lapTimingStarted ? FormatTime(raceTime - lapStartTime) : "GRID RUN-UP", centered);
+        Label(new Rect(1310, 110, 240, 20), "BEST  /  " + (bestSavedLap > 0f ? FormatTime(bestSavedLap) : "--:--.---"), eyebrow);
+        DrawLeaderboard();
+        Fill(new Rect(28, 628, 258, 222), panel);
+        Label(new Rect(48, 642, 220, 22), "VESPER RING / LIVE", eyebrow);
+        DrawMap(new Rect(46, 676, 220, 156), true);
+        Fill(new Rect(1248, 636, 324, 214), panel);
+        Color active = player.IsBoosting ? cyan : Color.white;
+        Label(new Rect(1272, 647, 280, 80), Mathf.RoundToInt(player.SpeedKph).ToString("000"), number, active);
+        Label(new Rect(1456, 705, 90, 20), "KM/H", small);
+        Label(new Rect(1274, 745, 275, 24), player.IsBoosting ? "BOOST ENGAGED" : player.IsDrifting ? "DRIFT / RECHARGING" : "NITRO RESERVE", eyebrow, player.IsDrifting ? violet : cyan);
+        for (int i = 0; i < 20; i++)
+            Fill(new Rect(1276 + i * 13, 782, 9, 29), player.Nitro >= (i + 1) * 5f ? cyan : card);
+        Label(new Rect(318, 856, 925, 22), "SHIFT / SPACE  BOOST    CTRL  DRIFT    C  CAMERA    F  RECOVER    R  RESTART    ESC  PAUSE", small);
+        if (splitFlash > 0f && lapTimes.Count > 0)
+        {
+            Fill(new Rect(608, 148, 384, 71), panel);
+            Label(new Rect(625, 158, 350, 22), "LAP " + lapTimes.Count + "  /  " + FormatTime(lapTimes[lapTimes.Count - 1]), centered);
+            Label(new Rect(625, 187, 350, 22), lastLapRecord ? "NEW PERSONAL BEST" : (lastSplit <= 0f ? "-" : "+") + Mathf.Abs(lastSplit).ToString("0.000") + " TO PERSONAL BEST", small, lastLapRecord || lastSplit <= 0f ? cyan : new Color(1f,.6f,.35f));
+        }
     }
-
-    private void DrawCountdown(float w, float h)
+    private void DrawLeaderboard()
     {
-        string value = Mathf.Max(1, Mathf.CeilToInt(countdown)).ToString();
-        GUI.Label(new Rect(w * .5f - 160f, h * .5f - 145f, 320f, 250f), value, resultPlaceStyle);
+        if (timeTrial) return;
+        standings.Clear();
+        standings.Add(new Standing { Name = "YOU", Progress = player.TotalProgress, Player = true, Finished = mode == GameMode.Finished, FinishTime = raceTime });
+        for (int i = 0; i < rivals.Count; i++)
+            standings.Add(new Standing { Name = "PILOT " + (i + 1).ToString("00"), Progress = rivals[i].TotalProgress, Finished = rivals[i].Finished, FinishTime = rivals[i].FinishTime });
+        standings.Sort((a, b) =>
+        {
+            if (a.Finished && b.Finished) return a.FinishTime.CompareTo(b.FinishTime);
+            if (a.Finished != b.Finished) return a.Finished ? -1 : 1;
+            return b.Progress.CompareTo(a.Progress);
+        });
+        Fill(new Rect(28, 194, 258, 284), panel);
+        Label(new Rect(47, 206, 220, 23), "RACE ORDER", eyebrow);
+        for (int i = 0; i < standings.Count; i++)
+        {
+            Standing s = standings[i];
+            float y = 241 + i * 32;
+            if (s.Player) Fill(new Rect(40, y - 1, 234, 29), new Color(.08f,.25f,.28f,.9f));
+            Label(new Rect(48, y, 35, 23), (i + 1).ToString("00"), small, s.Player ? cyan : muted);
+            Label(new Rect(89, y, 98, 23), s.Name, small, s.Player ? Color.white : muted);
+            float gap = (s.Progress - player.TotalProgress) * track.TrackLength;
+            Label(new Rect(184, y, 83, 23), s.Player ? "" : (gap > 0f ? "+" : "-") + Mathf.Abs(gap).ToString("0") + "m", small);
+        }
     }
-
-    private void DrawCenteredFlash(float w, float h, string text, Color color, float alpha)
+    private void DrawCountdown()
     {
-        GUI.color = new Color(color.r, color.g, color.b, Mathf.Clamp01(alpha));
-        GUI.Label(new Rect(w * .5f - 250f, h * .5f - 100f, 500f, 180f), text, resultPlaceStyle);
-        GUI.color = Color.white;
+        Fill(new Rect(622, 300, 356, 285), new Color(.025f,.045f,.065f,.82f));
+        Label(new Rect(635, 324, 330, 25), "SYSTEMS ARMED / STAND BY", eyebrow);
+        Label(new Rect(635, 356, 330, 178), Mathf.Max(1, Mathf.CeilToInt(countdown)).ToString(), centerNumber, cyan);
+        Label(new Rect(635, 543, 330, 24), "W / UP  TO ACCELERATE", centered);
     }
-
-    private void DrawPause(float w, float h)
+    private void CenterFlash(string text, Color color, float alpha)
     {
-        DrawModalShade(w, h);
-        Rect panel = new Rect(w * .5f - 245f, h * .5f - 255f, 490f, 510f);
-        GUI.DrawTexture(panel, panelTexture);
-        GUI.Label(new Rect(panel.x + 44f, panel.y + 42f, 400f, 22f), "SYSTEM HOLD  //  PAUSED", overlineStyle);
-        GUI.Label(new Rect(panel.x + 42f, panel.y + 90f, 405f, 60f), "RACE PAUSED.", centerTitleStyle);
-        GUI.Label(new Rect(panel.x + 44f, panel.y + 156f, 400f, 35f), "Take a breath. The vacuum can wait.", centerBodyStyle);
-        if (GUI.Button(new Rect(panel.x + 44f, panel.y + 225f, 402f, 64f), "RESUME RACE  →", launchStyle)) Resume();
-        if (GUI.Button(new Rect(panel.x + 44f, panel.y + 302f, 402f, 54f), "RESTART RACE", buttonStyle)) StartRace();
-        if (GUI.Button(new Rect(panel.x + 44f, panel.y + 368f, 402f, 54f), "RETURN TO GARAGE", buttonStyle)) ReturnToGarage();
+        Color c = color; c.a = Mathf.Clamp01(alpha);
+        Label(new Rect(550, 300, 500, 220), text, centerNumber, c);
     }
-
-    private void DrawResults(float w, float h)
+    private void DrawPause()
     {
-        DrawModalShade(w, h);
-        Rect panel = new Rect(w * .5f - 300f, h * .5f - 360f, 600f, 720f);
-        GUI.DrawTexture(panel, panelTexture);
-        GUI.Label(new Rect(panel.x + 50f, panel.y + 38f, 500f, 22f), "RACE COMPLETE  //  OFFICIAL RESULT", overlineStyle);
-        GUI.Label(new Rect(panel.x + 50f, panel.y + 72f, 500f, 170f), finalPlace + Ordinal(finalPlace), resultPlaceStyle);
-        string heading = finalPlace == 1 ? "STARBORN VICTORY." : finalPlace <= 3 ? "PODIUM SECURED." : "RACE COMPLETE.";
-        GUI.Label(new Rect(panel.x + 50f, panel.y + 245f, 500f, 55f), heading, centerTitleStyle);
-        GUI.Label(new Rect(panel.x + 50f, panel.y + 312f, 500f, 35f), finalPlace == 1 ? "First across the line. Orbit belongs to you." : "Telemetry saved. The next launch is yours.", centerBodyStyle);
-
-        float bestLap = lapTimes.Count > 0 ? Mathf.Min(lapTimes.ToArray()) : raceTime;
-        DrawResultCell(new Rect(panel.x + 50f, panel.y + 380f, 160f, 72f), "FINAL TIME", FormatTime(raceTime));
-        DrawResultCell(new Rect(panel.x + 220f, panel.y + 380f, 160f, 72f), "BEST LAP", FormatTime(bestLap));
-        DrawResultCell(new Rect(panel.x + 390f, panel.y + 380f, 160f, 72f), "DIFFICULTY", Difficulties[selectedDifficulty].Name);
-        if (GUI.Button(new Rect(panel.x + 50f, panel.y + 500f, 500f, 66f), "RACE AGAIN  ↻", launchStyle)) StartRace();
-        if (GUI.Button(new Rect(panel.x + 50f, panel.y + 580f, 500f, 54f), "CHANGE CAR", buttonStyle)) ReturnToGarage();
+        Shade();
+        Fill(new Rect(545, 196, 510, 510), panel);
+        Label(new Rect(580, 232, 440, 23), "FLIGHT CONTROL / ON HOLD", eyebrow);
+        Label(new Rect(577, 275, 450, 60), "RACE PAUSED", heading);
+        if (GUI.Button(new Rect(580, 367, 440, 61), "RESUME RACE   >", primary)) Resume();
+        if (GUI.Button(new Rect(580, 441, 440, 48), "RESTART EVENT", button)) StartRace();
+        if (GUI.Button(new Rect(580, 501, 440, 48), "SETTINGS", button)) showSettings = true;
+        if (GUI.Button(new Rect(580, 561, 440, 48), "RETURN TO GARAGE", button)) ReturnToGarage();
+        Label(new Rect(580, 641, 440, 24), "ESC TO RESUME", small);
     }
-
-    private void DrawModalShade(float w, float h)
+    private void DrawResults()
     {
-        GUI.color = new Color(0f, 0f, 0f, .72f);
-        GUI.DrawTexture(new Rect(0f, 0f, w, h), blackTexture);
-        GUI.color = Color.white;
+        Shade();
+        Fill(new Rect(462, 87, 676, 726), panel);
+        Fill(new Rect(462, 87, 676, 4), cyan);
+        Label(new Rect(505, 116, 590, 22), "VESPER RING / OFFICIAL CLASSIFICATION", eyebrow);
+        Label(new Rect(505, 149, 590, 145), timeTrial ? "COMPLETE" : finalPlace.ToString("00") + " / 07", centerNumber, cyan);
+        Label(new Rect(505, 305, 590, 42), timeTrial ? "TIME ATTACK COMPLETE" : finalPlace == 1 ? "ORBIT BELONGS TO YOU." : finalPlace <= 3 ? "PODIUM SECURED." : "RACE COMPLETE.", centered);
+        Label(new Rect(505, 354, 590, 25), recordSet ? "NEW PERSONAL LAP RECORD" : "TELEMETRY LOGGED / READY FOR ANOTHER RUN", eyebrow, recordSet ? cyan : muted);
+        Cell(new Rect(505, 406, 284, 70), "EVENT TIME", FormatTime(raceTime));
+        Cell(new Rect(809, 406, 284, 70), "PERSONAL BEST", bestSavedLap > 0f ? FormatTime(bestSavedLap) : "--:--.---");
+        for (int i = 0; i < lapTimes.Count; i++)
+        {
+            Label(new Rect(514 + i * 196, 493, 180, 23), "LAP " + (i + 1), small);
+            Label(new Rect(514 + i * 196, 519, 180, 27), FormatTime(lapTimes[i]), centered);
+        }
+        if (GUI.Button(new Rect(505, 596, 588, 63), "RACE AGAIN   >", primary)) StartRace();
+        if (GUI.Button(new Rect(505, 674, 588, 48), "RETURN TO GARAGE", button)) ReturnToGarage();
+        Label(new Rect(505, 750, 588, 24), StellarCarCatalog.Cars[selectedCar].DisplayName + "  /  " + (timeTrial ? "SOLO" : Difficulties[selectedDifficulty].Name), small);
     }
-
-    private void DrawResultCell(Rect rect, string label, string value)
+    private void DrawSettings()
     {
-        GUI.DrawTexture(rect, cardTexture);
-        GUI.Label(new Rect(rect.x + 10f, rect.y + 13f, rect.width - 20f, 18f), label, hudLabelStyle);
-        GUI.Label(new Rect(rect.x + 10f, rect.y + 36f, rect.width - 20f, 26f), value, centerBodyStyle);
+        float oldVolume = StellarSettings.MasterVolume, oldShake = StellarSettings.Shake;
+        bool oldQuality = StellarSettings.HighQuality;
+        Shade();
+        Fill(new Rect(500, 168, 600, 564), panel);
+        Label(new Rect(545, 204, 510, 23), "FLIGHT CONTROL / PREFERENCES", eyebrow);
+        Label(new Rect(542, 245, 510, 50), "TUNE YOUR EXPERIENCE", heading);
+        Label(new Rect(545, 324, 510, 22), "MASTER VOLUME  /  " + Mathf.RoundToInt(StellarSettings.MasterVolume * 100) + "%", body);
+        StellarSettings.MasterVolume = GUI.HorizontalSlider(new Rect(549, 365, 495, 24), StellarSettings.MasterVolume, 0f, 1f);
+        Label(new Rect(545, 405, 510, 22), "CAMERA SHAKE  /  " + Mathf.RoundToInt(StellarSettings.Shake * 100) + "%", body);
+        StellarSettings.Shake = GUI.HorizontalSlider(new Rect(549, 446, 495, 24), StellarSettings.Shake, 0f, 1f);
+        if (GUI.Button(new Rect(545, 496, 510, 48), "VISUAL QUALITY  /  " + (StellarSettings.HighQuality ? "HIGH" : "PERFORMANCE"), button)) StellarSettings.HighQuality = !StellarSettings.HighQuality;
+        if (oldVolume != StellarSettings.MasterVolume || oldShake != StellarSettings.Shake || oldQuality != StellarSettings.HighQuality) StellarSettings.Apply();
+        if (GUI.Button(new Rect(545, 587, 510, 61), "SAVE & RETURN   >", primary)) { StellarSettings.Save(); showSettings = false; }
+        Label(new Rect(545, 676, 510, 22), "SETTINGS ARE SAVED ON THIS COMPUTER", small);
     }
-
-    private void DrawStat(Rect rect, string label, float value, string number)
+    private void BuildMap()
     {
-        GUI.Label(new Rect(rect.x, rect.y - 24f, rect.width * .7f, 18f), label, hudLabelStyle);
-        GUI.Label(new Rect(rect.x + rect.width - 45f, rect.y - 24f, 45f, 18f), number, hudLabelStyle);
-        GUI.color = new Color(1f, 1f, 1f, .12f); GUI.DrawTexture(rect, lineTexture);
-        GUI.color = cyan; GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width * Mathf.Clamp01(value), rect.height), lineTexture);
-        GUI.color = Color.white;
+        mapPoints = new Vector2[121];
+        mapMin = new Vector2(float.PositiveInfinity, float.PositiveInfinity);
+        mapMax = new Vector2(float.NegativeInfinity, float.NegativeInfinity);
+        for (int i = 0; i < mapPoints.Length; i++)
+        {
+            track.GetFrame(i / (float)(mapPoints.Length - 1), out Vector3 c, out Vector3 t, out Vector3 r, out Vector3 u);
+            mapPoints[i] = new Vector2(c.x, c.z);
+            mapMin = Vector2.Min(mapMin, mapPoints[i]);
+            mapMax = Vector2.Max(mapMax, mapPoints[i]);
+        }
     }
-
+    private Vector2 MapPoint(Vector3 world, Rect rect)
+    {
+        Vector2 size = mapMax - mapMin;
+        float scale = Mathf.Min(rect.width / Mathf.Max(1f, size.x), rect.height / Mathf.Max(1f, size.y));
+        Vector2 center = (mapMin + mapMax) * .5f;
+        return rect.center + new Vector2(world.x - center.x, -(world.z - center.y)) * scale;
+    }
+    private void DrawMap(Rect rect, bool live)
+    {
+        if (mapPoints == null) return;
+        for (int i = 1; i < mapPoints.Length; i++)
+        {
+            Vector2 a = MapPoint(new Vector3(mapPoints[i - 1].x, 0, mapPoints[i - 1].y), rect);
+            Vector2 b = MapPoint(new Vector3(mapPoints[i].x, 0, mapPoints[i].y), rect);
+            Line(a, b, 3f, new Color(.35f,.48f,.55f));
+        }
+        track.GetFrame(0f, out Vector3 start, out Vector3 t, out Vector3 r, out Vector3 u);
+        Vector2 p = MapPoint(start, rect);
+        Fill(new Rect(p.x - 3, p.y - 3, 6, 6), Color.white);
+        if (!live || player == null) return;
+        foreach (StellarAICar rival in rivals)
+        {
+            Vector2 dot = MapPoint(rival.transform.position, rect);
+            Fill(new Rect(dot.x - 2, dot.y - 2, 4, 4), violet);
+        }
+        Vector2 you = MapPoint(player.transform.position, rect);
+        Fill(new Rect(you.x - 5, you.y - 5, 10, 10), new Color(.015f,.025f,.035f));
+        Fill(new Rect(you.x - 3, you.y - 3, 6, 6), cyan);
+    }
+    private void Line(Vector2 a, Vector2 b, float width, Color color)
+    {
+        Matrix4x4 old = GUI.matrix;
+        GUIUtility.RotateAroundPivot(Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg, a);
+        Fill(new Rect(a.x, a.y - width * .5f, Vector2.Distance(a, b), width), color);
+        GUI.matrix = old;
+    }
+    private void Stat(Rect rect, string name, float value)
+    {
+        Label(new Rect(rect.x, rect.y - 26, rect.width, 22), name, small);
+        Fill(rect, card);
+        Fill(new Rect(rect.x, rect.y, rect.width * Mathf.Clamp01(value), rect.height), cyan);
+    }
+    private void Cell(Rect rect, string name, string value)
+    {
+        Fill(rect, card);
+        Label(new Rect(rect.x + 16, rect.y + 7, rect.width - 32, 21), name, small);
+        Label(new Rect(rect.x + 16, rect.y + 34, rect.width - 32, 29), value, centered);
+    }
+    private void Shade() { Fill(new Rect(-2000, -2000, 6000, 6000), new Color(.005f,.01f,.02f,.87f)); }
+    private void Fill(Rect rect, Color color)
+    {
+        Color old = GUI.color; GUI.color = color;
+        GUI.DrawTexture(rect, white);
+        GUI.color = old;
+    }
+    private void Label(Rect rect, string text, GUIStyle style) { GUI.Label(rect, text, style); }
+    private void Label(Rect rect, string text, GUIStyle style, Color color)
+    {
+        Color old = style.normal.textColor;
+        style.normal.textColor = color;
+        GUI.Label(rect, text, style);
+        style.normal.textColor = old;
+    }
     private static string FormatTime(float time)
     {
-        int minutes = Mathf.FloorToInt(time / 60f);
-        int seconds = Mathf.FloorToInt(time % 60f);
-        int milliseconds = Mathf.FloorToInt((time - Mathf.Floor(time)) * 1000f);
-        return minutes.ToString("00") + ":" + seconds.ToString("00") + "." + milliseconds.ToString("000");
+        time = Mathf.Max(0f, time);
+        int minutes = Mathf.FloorToInt(time / 60f), seconds = Mathf.FloorToInt(time % 60f);
+        int ms = Mathf.FloorToInt((time - Mathf.Floor(time)) * 1000f);
+        return minutes.ToString("00") + ":" + seconds.ToString("00") + "." + ms.ToString("000");
     }
-
-    private static string Ordinal(int value)
-    {
-        if (value == 1) return "ST";
-        if (value == 2) return "ND";
-        if (value == 3) return "RD";
-        return "TH";
-    }
-
     private void EnsureStyles()
     {
-        if (panelTexture != null) return;
-        panelTexture = Solid(new Color(.025f, .035f, .085f, .92f));
-        cardTexture = Solid(new Color(.08f, .10f, .17f, .84f));
-        buttonTexture = Solid(new Color(.08f, .10f, .17f, .92f));
-        selectedTexture = Solid(new Color(.08f, .35f, .43f, .92f));
-        launchTexture = Solid(new Color(.36f, .16f, .94f, .96f));
-        lineTexture = Solid(Color.white);
-        blackTexture = Solid(Color.black);
-
-        logoStyle = Style(28, FontStyle.Bold, TextAnchor.UpperLeft, Color.white);
-        overlineStyle = Style(15, FontStyle.Bold, TextAnchor.UpperLeft, cyan);
-        heroStyle = Style(54, FontStyle.BoldAndItalic, TextAnchor.UpperLeft, Color.white);
-        bodyStyle = Style(19, FontStyle.Normal, TextAnchor.UpperLeft, muted);
-        bodyStyle.wordWrap = true;
-        centerTitleStyle = Style(39, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
-        centerBodyStyle = Style(20, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
-        hudBigStyle = Style(77, FontStyle.Bold, TextAnchor.UpperLeft, Color.white);
-        hudLabelStyle = Style(14, FontStyle.Bold, TextAnchor.MiddleLeft, muted);
-        resultPlaceStyle = Style(132, FontStyle.BoldAndItalic, TextAnchor.MiddleCenter, cyan);
-
-        carButtonStyle = ButtonStyle(buttonTexture, cardTexture, 18, TextAnchor.MiddleCenter, Color.white);
-        selectedCarButtonStyle = ButtonStyle(selectedTexture, selectedTexture, 18, TextAnchor.MiddleCenter, Color.white);
-        buttonStyle = ButtonStyle(buttonTexture, cardTexture, 17, TextAnchor.MiddleCenter, Color.white);
-        selectedButtonStyle = ButtonStyle(selectedTexture, selectedTexture, 17, TextAnchor.MiddleCenter, Color.white);
-        launchStyle = ButtonStyle(launchTexture, selectedTexture, 22, TextAnchor.MiddleCenter, Color.white);
+        if (white != null) return;
+        white = new Texture2D(1, 1, TextureFormat.RGBA32, false) { name = "Hyperion UI", hideFlags = HideFlags.DontSave };
+        white.SetPixel(0, 0, Color.white); white.Apply();
+        logo = Style(34, FontStyle.BoldAndItalic, TextAnchor.MiddleLeft, Color.white);
+        eyebrow = Style(13, FontStyle.Bold, TextAnchor.MiddleLeft, cyan);
+        title = Style(44, FontStyle.BoldAndItalic, TextAnchor.UpperLeft, Color.white);
+        title.wordWrap = false;
+        heading = Style(28, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+        body = Style(16, FontStyle.Normal, TextAnchor.UpperLeft, muted); body.wordWrap = true;
+        small = Style(12, FontStyle.Bold, TextAnchor.MiddleLeft, muted);
+        number = Style(68, FontStyle.BoldAndItalic, TextAnchor.UpperLeft, Color.white);
+        centerNumber = Style(90, FontStyle.BoldAndItalic, TextAnchor.MiddleCenter, Color.white);
+        centered = Style(21, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+        button = ButtonStyle(card, Color.white, 14);
+        selectedButton = ButtonStyle(new Color(.09f,.28f,.30f), cyan, 14);
+        primary = ButtonStyle(new Color(.21f,.72f,.70f), new Color(.01f,.04f,.055f), 20);
     }
-
-    private static GUIStyle Style(int size, FontStyle fontStyle, TextAnchor alignment, Color color)
+    private static GUIStyle Style(int size, FontStyle weight, TextAnchor align, Color color)
     {
-        return new GUIStyle(GUI.skin.label)
-        {
-            fontSize = size,
-            fontStyle = fontStyle,
-            alignment = alignment,
-            normal = { textColor = color },
-            richText = false
-        };
+        GUIStyle s = new GUIStyle(GUI.skin.label) { fontSize = size, fontStyle = weight, alignment = align, richText = false };
+        s.normal.textColor = color;
+        return s;
     }
-
-    private static GUIStyle ButtonStyle(Texture2D normal, Texture2D hover, int size, TextAnchor alignment, Color color)
+    private static GUIStyle ButtonStyle(Color color, Color text, int size)
     {
-        GUIStyle style = new GUIStyle(GUI.skin.button)
+        Texture2D normal = Solid(color), hover = Solid(Color.Lerp(color, Color.white, .12f));
+        GUIStyle s = new GUIStyle(GUI.skin.button)
         {
-            fontSize = size,
-            fontStyle = FontStyle.Bold,
-            alignment = alignment,
-            wordWrap = true,
-            padding = new RectOffset(12, 12, 8, 8)
+            fontSize = size, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter,
+            padding = new RectOffset(8,8,6,6), border = new RectOffset(0,0,0,0), richText = false
         };
-        style.normal.background = normal;
-        style.hover.background = hover;
-        style.active.background = hover;
-        style.focused.background = normal;
-        style.normal.textColor = color;
-        style.hover.textColor = color;
-        style.active.textColor = color;
-        return style;
+        s.normal.background = normal; s.hover.background = hover; s.active.background = hover; s.focused.background = normal;
+        s.normal.textColor = text; s.hover.textColor = text; s.active.textColor = text; s.focused.textColor = text;
+        return s;
     }
-
     private static Texture2D Solid(Color color)
     {
-        Texture2D texture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-        texture.name = "Stellar UI " + color;
-        texture.hideFlags = HideFlags.DontSave;
-        texture.SetPixel(0, 0, color);
-        texture.Apply();
-        return texture;
+        Texture2D t = new Texture2D(1,1,TextureFormat.RGBA32,false) { hideFlags = HideFlags.DontSave };
+        t.SetPixel(0,0,color); t.Apply(); return t;
     }
 }
